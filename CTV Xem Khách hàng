@@ -1,230 +1,133 @@
 /**
- * Shortcode:
- * [affiliate_referred_customers]
+ * Thêm cột "Khách hàng" vào:
+ * Affiliate Area > Referrals
  *
- * Hiển thị tên khách hàng do cộng tác viên hiện tại giới thiệu
- * thông qua AffiliateWP + Paid Memberships Pro.
+ * Dành cho:
+ * - AffiliateWP
+ * - Paid Memberships Pro
+ *
+ * Chỉ hiển thị tên khách hàng.
+ * Không hiển thị email, số điện thoại hoặc thông tin cá nhân khác.
  */
 
-add_shortcode( 'affiliate_referred_customers', function( $atts ) {
 
-	$atts = shortcode_atts(
-		array(
-			'title'      => 'Khách hàng bạn đã giới thiệu',
-			'empty_text' => 'Bạn chưa giới thiệu khách hàng nào.',
-		),
-		$atts,
-		'affiliate_referred_customers'
-	);
+/**
+ * 1. Thêm tiêu đề cột.
+ */
+add_action( 'affwp_referrals_dashboard_th', function() {
 
-	// Chưa đăng nhập.
-	if ( ! is_user_logged_in() ) {
-		return '<div>Vui lòng đăng nhập để xem danh sách khách hàng.</div>';
-	}
+	echo '<th class="referral-customer-name">Khách hàng</th>';
 
-	// Kiểm tra AffiliateWP.
-	if ( ! function_exists( 'affwp_get_affiliate_id' ) || ! function_exists( 'affiliate_wp' ) ) {
-		return '<div>Chức năng cộng tác viên hiện chưa sẵn sàng.</div>';
-	}
+} );
 
-	// Kiểm tra Paid Memberships Pro.
-	if ( ! class_exists( 'MemberOrder' ) ) {
-		return '<div>Chức năng thành viên hiện chưa sẵn sàng.</div>';
-	}
 
-	// Lấy affiliate ID từ chính tài khoản đang đăng nhập.
-	$affiliate_id = (int) affwp_get_affiliate_id();
+/**
+ * 2. Thêm tên khách hàng vào từng Referral.
+ */
+add_action( 'affwp_referrals_dashboard_td', function( $referral ) {
 
-	if ( $affiliate_id <= 0 ) {
-		return '<div>Tài khoản này chưa phải là cộng tác viên.</div>';
-	}
+	$name = '';
 
-	$customer_names = array();
-	$seen_users     = array();
+	/*
+	 * Chỉ xử lý Referral của Paid Memberships Pro.
+	 */
+	$context = ! empty( $referral->context )
+		? (string) $referral->context
+		: '';
 
-	$per_page = 200;
-	$offset   = 0;
+	if ( 'pmp' === $context && class_exists( 'MemberOrder' ) ) {
 
-	for ( $loop = 0; $loop < 100; $loop++ ) {
+		/*
+		 * AffiliateWP lưu PMPro Order ID
+		 * trong trường Reference.
+		 */
+		$order_id = ! empty( $referral->reference )
+			? absint( $referral->reference )
+			: 0;
 
-		$referrals = affiliate_wp()->referrals->get_referrals(
-			array(
-				'number'       => $per_page,
-				'offset'       => $offset,
-				'affiliate_id' => $affiliate_id,
-				'status'       => array(
-					'pending',
-					'unpaid',
-					'paid',
-				),
-				'orderby'      => 'date',
-				'order'        => 'DESC',
-			)
-		);
-
-		if ( empty( $referrals ) ) {
-			break;
-		}
-
-		foreach ( $referrals as $referral ) {
-
-			/*
-			 * Referral của Paid Memberships Pro thường có context = pmp.
-			 */
-			$context = ! empty( $referral->context )
-				? (string) $referral->context
-				: '';
-
-			if ( 'pmp' !== $context ) {
-				continue;
-			}
-
-			/*
-			 * Reference của referral là PMPro Order ID.
-			 */
-			$order_id = ! empty( $referral->reference )
-				? absint( $referral->reference )
-				: 0;
-
-			if ( ! $order_id ) {
-				continue;
-			}
+		if ( $order_id > 0 ) {
 
 			$order = new MemberOrder( $order_id );
 
-			if ( empty( $order->id ) || empty( $order->user_id ) ) {
-				continue;
+			if ( ! empty( $order->user_id ) ) {
+
+				$user_id = absint( $order->user_id );
+
+				/*
+				 * Ưu tiên lấy Họ + Tên.
+				 */
+				$first_name = trim(
+					(string) get_user_meta(
+						$user_id,
+						'first_name',
+						true
+					)
+				);
+
+				$last_name = trim(
+					(string) get_user_meta(
+						$user_id,
+						'last_name',
+						true
+					)
+				);
+
+				$name = trim( $first_name . ' ' . $last_name );
+
+
+				/*
+				 * Nếu chưa nhập Họ/Tên,
+				 * dùng Display Name của WordPress.
+				 */
+				if ( '' === $name ) {
+
+					$user = get_userdata( $user_id );
+
+					if ( $user ) {
+						$name = trim(
+							(string) $user->display_name
+						);
+					}
+				}
 			}
-
-			$user_id = absint( $order->user_id );
-
-			// Một khách hàng chỉ hiển thị một lần.
-			if ( isset( $seen_users[ $user_id ] ) ) {
-				continue;
-			}
-
-			$user = get_userdata( $user_id );
-
-			if ( ! $user ) {
-				continue;
-			}
-
-			/*
-			 * Ưu tiên Họ + Tên.
-			 */
-			$first_name = trim(
-				(string) get_user_meta(
-					$user_id,
-					'first_name',
-					true
-				)
-			);
-
-			$last_name = trim(
-				(string) get_user_meta(
-					$user_id,
-					'last_name',
-					true
-				)
-			);
-
-			$name = trim( $first_name . ' ' . $last_name );
-
-			/*
-			 * Nếu WordPress chưa có Họ/Tên thì dùng Display Name.
-			 */
-			if ( '' === $name ) {
-				$name = trim( (string) $user->display_name );
-			}
-
-			/*
-			 * Trường hợp cuối cùng dùng username.
-			 * Tuyệt đối không hiển thị email.
-			 */
-			if ( '' === $name ) {
-				$name = (string) $user->user_login;
-			}
-
-			$seen_users[ $user_id ] = true;
-			$customer_names[]       = $name;
 		}
-
-		if ( count( $referrals ) < $per_page ) {
-			break;
-		}
-
-		$offset += $per_page;
 	}
 
-	ob_start();
+	/*
+	 * Không tìm được tên thì chỉ hiện dấu —
+	 * Không fallback sang email/username.
+	 */
+	if ( '' === $name ) {
+		$name = '—';
+	}
+
+	echo '<td class="referral-customer-name" data-th="Khách hàng">';
+	echo esc_html( $name );
+	echo '</td>';
+
+} );
+
+
+/**
+ * 3. CSS nhỏ để cột tên khách hàng dễ đọc.
+ */
+add_action( 'wp_head', function() {
+
+	if ( ! is_user_logged_in() ) {
+		return;
+	}
+
 	?>
-
-	<div class="affiliate-customer-list">
-
-		<?php if ( ! empty( $atts['title'] ) ) : ?>
-			<div class="affiliate-customer-title">
-				<?php echo esc_html( $atts['title'] ); ?>
-			</div>
-		<?php endif; ?>
-
-		<?php if ( empty( $customer_names ) ) : ?>
-
-			<div class="affiliate-customer-empty">
-				<?php echo esc_html( $atts['empty_text'] ); ?>
-			</div>
-
-		<?php else : ?>
-
-			<ul class="affiliate-customer-names">
-
-				<?php foreach ( $customer_names as $customer_name ) : ?>
-
-					<li>
-						<?php echo esc_html( $customer_name ); ?>
-					</li>
-
-				<?php endforeach; ?>
-
-			</ul>
-
-		<?php endif; ?>
-
-	</div>
-
 	<style>
-	.affiliate-customer-list {
-		width: 100%;
-	}
+		#affwp-affiliate-dashboard-referrals
+		.referral-customer-name {
+			white-space: nowrap;
+		}
 
-	.affiliate-customer-title {
-		font-size: 18px;
-		font-weight: 600;
-		margin-bottom: 12px;
-	}
-
-	.affiliate-customer-names {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
-
-	.affiliate-customer-names li {
-		padding: 10px 0;
-		border-bottom: 1px solid rgba(0,0,0,.08);
-		line-height: 1.5;
-	}
-
-	.affiliate-customer-names li:last-child {
-		border-bottom: 0;
-	}
-
-	.affiliate-customer-empty {
-		line-height: 1.6;
-	}
+		#affwp-affiliate-dashboard-referrals th.referral-customer-name {
+			font-weight: 600;
+		}
 	</style>
-
 	<?php
-
-	return ob_get_clean();
 
 } );
